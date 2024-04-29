@@ -9,10 +9,17 @@ import (
 	"CCdb/tools/selfsync"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/gofrs/flock"
+)
+
+const (
+	fileLockName = "FLOCK"
 )
 
 type DB struct {
@@ -36,6 +43,16 @@ func Open(options option.Options) (*DB, error) {
 		if err := os.MkdirAll(options.DirPath, os.ModePerm); err != nil {
 			return nil, err
 		}
+	}
+
+	//文件锁， 避免其他进程访问
+	fileLock := flock.New(filepath.Join(options.DirPath, fileLockName))
+	hold, err := fileLock.TryRLock()
+	if err != nil {
+		return nil, err
+	}
+	if !hold {
+		return nil, errors.ErrHoldDatabaseFile
 	}
 
 	db := &DB{
@@ -306,7 +323,10 @@ func (db *DB) loadIndexFromDatafiles() error {
 				db.index.Delete(logRecord.Key)
 			} else {
 				db.index.Put(logRecord.Key, logRecordPos)
-				db.bloomFilter.Add(logRecord.Key)
+				err := db.bloomFilter.Add(logRecord.Key)
+				if err != nil {
+					return err
+				}
 			}
 			offset += size
 		}
